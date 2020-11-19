@@ -15,3 +15,6 @@ If not, the memory is copied.
 Multiplies two matrix together, and compares times between CPU and GPU.
 
 If `GROUPS` is defined, it uses groups to have cache speedup. You can change the size of the groups in `matrix_prod.cpp`.
+
+## Video filter
+Video filtering calculations in GPU (opencv stuff) to modify a video.
