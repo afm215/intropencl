@@ -1,5 +1,7 @@
 # intropencl
-An introduction to OpenCL (Lutecia Week 2020 TP39)
+An introduction to OpenCL (Lutecia Week 2020 TP39).
+
+From [https://github.com/amusant/tpt39](https://github.com/amusant/tpt39).
 
 ## Hello world
 Writes "hello world !", it's mainly just to see how to setup an OpenCL program.
