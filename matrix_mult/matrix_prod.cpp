@@ -137,7 +137,7 @@ int main() {
     context_properties[1] = (cl_context_properties)platform;
     clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU, 1, &device, NULL);
     context = clCreateContext(context_properties, 1, &device, NULL, NULL, NULL);
-    queue = clCreateCommandQueue(context, device, 0, NULL);
+    queue = clCreateCommandQueueWithProperties(context, device, NULL, NULL);
 
     unsigned char **opencl_program = read_file("matrix_prod.cl");
     program = clCreateProgramWithSource(
