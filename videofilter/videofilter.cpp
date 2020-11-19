@@ -1,4 +1,5 @@
 #include "opencv2/opencv.hpp"
+#include "videocl.hpp"
 #include <fstream>
 #include <iostream> // for standard I/O
 #include <stdio.h>
@@ -34,11 +35,7 @@ int main(int, char **) {
     const char *windowName = "filter"; // Name shown in the GUI window.
     namedWindow(windowName); // Resizable window, might not work on Windows.
 #endif
-    // struct timespec rqtp;
-    // rqtp.tv_sec = 0;
-    // rqtp.tv_nsec = 10000000;
     while (true) {
-        // nanosleep(&rqtp, NULL);
         Mat cameraFrame, displayframe;
         count = count + 1;
         if (count > 299)
@@ -51,10 +48,17 @@ int main(int, char **) {
         GaussianBlur(grayframe, grayframe, Size(3, 3), 0, 0);
         GaussianBlur(grayframe, grayframe, Size(3, 3), 0, 0);
         GaussianBlur(grayframe, grayframe, Size(3, 3), 0, 0);
+#ifdef OPENCV
         Scharr(grayframe, edge_x, CV_8U, 0, 1, 1, 0, BORDER_DEFAULT);
         Scharr(grayframe, edge_y, CV_8U, 1, 0, 1, 0, BORDER_DEFAULT);
         addWeighted(edge_x, 0.5, edge_y, 0.5, 0, edge);
         threshold(edge, edge, 80, 255, THRESH_BINARY_INV);
+#else
+        ScharrCL(grayframe, edge_x, CV_8U, 0, 1, 1, 0, BORDER_DEFAULT);
+        ScharrCL(grayframe, edge_y, CV_8U, 1, 0, 1, 0, BORDER_DEFAULT);
+        addWeightedCL(edge_x, 0.5, edge_y, 0.5, 0, edge);
+        thresholdCL(edge, edge, 80, 255, THRESH_BINARY_INV);
+#endif
         time(&end);
         cvtColor(edge, edge_inv, COLOR_GRAY2BGR);
         // Clear the output image to black, so that the cartoon line drawings
