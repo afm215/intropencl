@@ -226,7 +226,7 @@ int main() {
 
     const size_t global_work_size = N;
     status = clEnqueueNDRangeKernel(queue, kernel, 1, NULL, &global_work_size,
-                                    NULL, 2, write_event, &kernel_event);
+                                    NULL, 0, NULL, &kernel_event);
     checkError(status, "Failed to launch kernel");
     // Read the result. This the final operation.
     clWaitForEvents(1, &kernel_event);
@@ -236,18 +236,17 @@ int main() {
     // GPU READ
 
 #ifndef MAPPED
-    cl_event finish_event;
     status =
-        clEnqueueReadBuffer(queue, output_buf, CL_TRUE, 0, N * sizeof(float),
-                            output, 1, &kernel_event, &finish_event);
+        clEnqueueReadBuffer(queue, output_buf, CL_FALSE, 0, N * sizeof(float),
+                            output, 0, NULL, &kernel_event);
     checkError(status, "enqueue read buffer failed");
     clWaitForEvents(1, &kernel_event);
 
     auto_display_time(&start, "GPU read output");
 #else
-    output = (float *)clEnqueueMapBuffer(queue, output_buf, CL_FALSE,
-                                         CL_MAP_READ, 0, N * sizeof(float), 0,
-                                         NULL, &write_event[0], &status);
+    output =
+        (float *)clEnqueueMapBuffer(queue, output_buf, CL_FALSE, CL_MAP_READ, 0,
+                                    N * sizeof(float), 0, 0, NULL, &status);
     checkError(status, "enqueue map buffer failed");
 
     auto_display_time(&start, "GPU output map");

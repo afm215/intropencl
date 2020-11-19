@@ -13,51 +13,130 @@ static void checkError(int status, const char *msg);
 static const char *getErrorString(cl_int error);
 static unsigned char **read_file(const char *name);
 
-#ifdef GROUPS
-#define PROGRAM "convol_prod_groups"
-#else
-#define PROGRAM "convol_prod"
-#endif
-
 static cl_context context;
 static cl_command_queue queue;
 static cl_program program;
-static cl_kernel kernel;
+static cl_kernel kernel_convol, kernel_add;
 
 static const cl_int scharrh[] = {1, 0, -1, 2, 0, -2, 1, 0, -1};
 static const cl_int scharrv[] = {1, 2, 1, 0, 0, 0, -1, -2, -1};
 
-void ScharrCL() {
+void ScharrCL(void *frame, void *output, size_t width, size_t height,
+              bool horizontal) {
+    // Set kernel arguments.
+    static const size_t local_size = 4;
+    unsigned argi = 0;
+    cl_int status, W = width, H = height, D = 3;
+    cl_event event;
+
+    status = clSetKernelArg(kernel_convol, argi++, sizeof(cl_mem), frame);
+    checkError(status, "[SCHARR] kernel set arg 1 failed");
+
+    status = clSetKernelArg(kernel_convol, argi++, sizeof(cl_mem),
+                            horizontal ? scharrh : scharrv);
+    checkError(status, "[SCHARR] kernel set arg 2 failed");
+
+    status = clSetKernelArg(kernel_convol, argi++, sizeof(cl_mem), output);
+    checkError(status, "[SCHARR] kernel set arg 3 failed");
+
+    status = clSetKernelArg(kernel_convol, argi++, sizeof(cl_uint), &W);
+    checkError(status, "[SCHARR] kernel set arg 4 failed");
+
+    status = clSetKernelArg(kernel_convol, argi++, sizeof(cl_uint), &H);
+    checkError(status, "[SCHARR] kernel set arg 5 failed");
+
+    status = clSetKernelArg(kernel_convol, argi++, sizeof(cl_uint), &D);
+    checkError(status, "[SCHARR] kernel set arg 6 failed");
+
+    // GPU RUN
+    const size_t global_work_size[] = {width, height};
+    const size_t local_work_size[] = {local_size, local_size};
+    status =
+        clEnqueueNDRangeKernel(queue, kernel_convol, 2, NULL, global_work_size,
+                               local_work_size, 0, NULL, &event);
+    checkError(status, "[SCHARR] Failed to launch kernel");
+    clWaitForEvents(1, &event);
+    clReleaseEvent(event);
+}
+
+void averageCL(void *input1, void *input2, void *output, size_t width,
+               size_t height) {
+    // Set kernel arguments.
+    static const size_t local_size = 4;
+    unsigned argi = 0;
+    cl_int status;
+    cl_event event;
+
+    status = clSetKernelArg(kernel_add, argi++, sizeof(cl_mem), input1);
+    checkError(status, "[AVERAGE] kernel set arg 1 failed");
+
+    status = clSetKernelArg(kernel_add, argi++, sizeof(cl_mem), input2);
+    checkError(status, "[AVERAGE] kernel set arg 2 failed");
+
+    status = clSetKernelArg(kernel_add, argi++, sizeof(cl_mem), output);
+    checkError(status, "[AVERAGE] kernel set arg 3 failed");
+
+    // GPU RUN
+    const size_t global_work_size = width * height;
+    status = clEnqueueNDRangeKernel(queue, kernel_add, 1, NULL,
+                                    &global_work_size, NULL, 0, NULL, &event);
+    checkError(status, "[AVERAGE] Failed to launch kernel");
+    clWaitForEvents(1, &event);
+    clReleaseEvent(event);
+}
+
+void cl_memwrite(void *from, void *to, size_t size) {
+    cl_int status = clEnqueueWriteBuffer(queue, (cl_mem)to, CL_TRUE, 0, size,
+                                         from, 0, NULL, NULL);
+    checkError(status, "Failed to transfer input A");
+}
+
+void cl_memread(void *from, void *to, size_t size) {
+    cl_int status = clEnqueueReadBuffer(queue, (cl_mem)to, CL_TRUE, 0, size,
+                                        from, 0, NULL, NULL);
+    checkError(status, "Failed to transfer input A");
+}
+
+void thresholdCL(void *input, void *output, size_t width, size_t height) {
     // TODO
 }
 
-void addWeightedCL() {
-    // TODO
+void *cl_getmem(size_t size) {
+    cl_int status;
+    auto buff = clCreateBuffer(context, CL_MEM_READ_WRITE, size, NULL, &status);
+    checkError(status, "Failed to create buffer for input A");
+    return buff;
 }
 
-void thresholdCL() {
-    // TODO
+void *cl_map_mem(void *buffer, size_t size) {
+    cl_event event;
+    cl_int status;
+    void *ret = clEnqueueMapBuffer(queue, (cl_mem)buffer, CL_TRUE,
+                                   CL_MAP_READ | CL_MAP_WRITE, 0, size, 0, NULL,
+                                   &event, NULL);
+    checkError(status, "enqueue map failed");
+    clWaitForEvents(1, &event);
+    clReleaseEvent(event);
+    return ret;
 }
 
-void init() {
+void cl_unmap_mem(void *from, void *to) {
+    cl_event event;
+    cl_int status =
+        clEnqueueUnmapMemObject(queue, (cl_mem)from, to, 0, NULL, &event);
+    checkError(status, "enqueue unmap failed");
+    clWaitForEvents(1, &event);
+    clReleaseEvent(event);
+}
+
+void cl_init() {
     char char_buffer[STRING_BUFFER_LEN];
     cl_platform_id platform;
     cl_device_id device;
     cl_context_properties context_properties[] = {CL_CONTEXT_PLATFORM, 0, 0};
 
     //--------------------------------------------------------------------
-    int M = 1;
-    float *input_a = 0;
-    float *input_b = 0;
-
-    cl_mem input_a_buf; // num_devices elements
-    cl_mem input_b_buf; // num_devices elements
-    cl_mem output_buf;  // num_devices elements
-    cl_event events[2];
     int status;
-
-    struct timespec start;
-    clock_gettime(CLOCK_REALTIME, &start);
 
     // GPU CONTEXT INIT
     clGetPlatformIDs(1, &platform, NULL);
@@ -86,77 +165,19 @@ void init() {
     status = clBuildProgram(program, 0, NULL, NULL, NULL, NULL);
     checkError(status, "program build failed");
 
-    kernel = clCreateKernel(program, PROGRAM, NULL);
-    // Input buffers.
-    input_a_buf = clCreateBuffer(context, CL_MEM_READ_WRITE, M * sizeof(float),
-                                 NULL, &status);
-    checkError(status, "Failed to create buffer for input A");
-
-    input_b_buf = clCreateBuffer(context, CL_MEM_READ_WRITE, M * sizeof(float),
-                                 NULL, &status);
-    checkError(status, "Failed to create buffer for input B");
-
-    // Output buffer.
-    output_buf = clCreateBuffer(context, CL_MEM_READ_WRITE, M * sizeof(float),
-                                NULL, &status);
-    checkError(status, "Failed to create buffer for output");
-
-    input_a = (float *)clEnqueueMapBuffer(
-        queue, input_a_buf, CL_FALSE, CL_MAP_READ | CL_MAP_WRITE, 0,
-        M * sizeof(float), 0, NULL, &events[0], &status);
-    checkError(status, "enqueue map failed");
-    input_b = (float *)clEnqueueMapBuffer(
-        queue, input_b_buf, CL_FALSE, CL_MAP_READ | CL_MAP_WRITE, 0,
-        M * sizeof(float), 0, NULL, &events[1], &status);
-    checkError(status, "enqueue map failed");
-
-    clWaitForEvents(2, events);
-
-    // Transfer inputs to each device. Each of the host buffers supplied to
-    // clEnqueueWriteBuffer here is already aligned to ensure that DMA is
-    // used for the host-to-device transfer.
-
-    clEnqueueUnmapMemObject(queue, input_a_buf, input_a, 0, NULL, &events[0]);
-    clEnqueueUnmapMemObject(queue, input_b_buf, input_b, 0, NULL, &events[1]);
-    clWaitForEvents(2, events);
-    // Set kernel arguments.
-    unsigned argi = 0;
-
-    status = clSetKernelArg(kernel, argi++, sizeof(cl_mem), &input_a_buf);
-    checkError(status, "Failed to set argument 1");
-
-    status = clSetKernelArg(kernel, argi++, sizeof(cl_mem), &input_b_buf);
-    checkError(status, "Failed to set argument 2");
-
-    status = clSetKernelArg(kernel, argi++, sizeof(cl_mem), &output_buf);
-    checkError(status, "Failed to set argument 3");
-
-    const cl_uint Mint = M;
-    status = clSetKernelArg(kernel, argi++, sizeof(cl_uint), &Mint);
-    checkError(status, "Failed to set argument 3");
-
-// GPU RUN
-#ifdef GROUPS
-    const size_t global_work_size[] = {M, M};
-    const size_t local_work_size[] = {local_size, local_size};
-    status = clEnqueueNDRangeKernel(queue, kernel, 2, NULL, global_work_size,
-                                    local_work_size, 0, NULL, &events[0]);
-#else
-    const size_t global_work_size = M;
-    status = clEnqueueNDRangeKernel(queue, kernel, 1, NULL, &global_work_size,
-                                    NULL, 0, NULL, &events[1]);
-#endif
-    checkError(status, "Failed to launch kernel");
-    clWaitForEvents(2, events);
-
-    clReleaseEvent(events[0]);
-    clReleaseEvent(events[1]);
+    kernel_convol = clCreateKernel(program, "convolution", &status);
+    checkError(status, "kernel creation failed");
+    kernel_add = clCreateKernel(program, "matrix_prod_groups", &status);
+    checkError(status, "kernel creation failed");
 }
 
 void cl_releasemem(cl_mem buff) { clReleaseMemObject(buff); }
 
 void cl_clean() {
-    clReleaseKernel(kernel);
+    clReleaseKernel(kernel_convol);
+    kernel_convol = 0;
+    clReleaseKernel(kernel_add);
+    kernel_add = 0;
     clReleaseCommandQueue(queue);
     clReleaseProgram(program);
     clReleaseContext(context);
