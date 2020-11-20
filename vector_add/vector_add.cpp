@@ -5,11 +5,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
-#define STRING_BUFFER_LEN 1024
+#define STRING_BUFFER_LEN 1000
 using namespace std;
 
 const char *getErrorString(cl_int error);
-const unsigned N = 50000000;
+const unsigned N = 1000;
 
 unsigned char **read_file(const char *name) {
     size_t size;

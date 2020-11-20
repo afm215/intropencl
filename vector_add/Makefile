@@ -2,7 +2,7 @@ EXE=vector_add
 GXX=g++
 
 CXXFLAGS=-g -Wall -Wextra -fpermissive -std=gnu++17 -Werror -O3 -ftree-vectorize -fstack-protector-strong
-CPPFLAGS=-DCL_TARGET_OPENCL_VERSION=220 -DMAPPED
+CPPFLAGS=-DCL_TARGET_OPENCL_VERSION=220
 LDFLAGS=-lOpenCL -lnvidia-opencl
 
 %.o: %.cl
