@@ -9,66 +9,7 @@
 using namespace cv;
 using namespace std;
 
-void check() {
-    cl_init();
-    srand(42);
-
-    uint8_t arr1[16];
-    uint8_t arr2[16] = {0};
-    for (int i = 0; i < 16; i++) {
-        arr1[i] = rand();
-    }
-
-    cl_mem buffer1 = cl_getmem(16);
-    cl_mem buffer2 = cl_getmem(16);
-
-    cl_memwrite(arr1, buffer1, 16);
-    cl_blur(buffer1, buffer2, 4, 4);
-    // cl_Scharr(buffer1, buffer2, 4, 4, true);
-    cl_memread(buffer2, arr2, 16);
-
-    Mat mat(Size(4, 4), CV_8UC1, arr1);
-    Mat out;
-
-    // Scharr(mat, out, CV_8UC1, 1, 0, 1, 0, BORDER_CONSTANT);
-    GaussianBlur(mat, out, Size(3, 3), 0, 0);
-
-    cout << "input" << endl;
-    for (int i = 0; i < 4; i++) {
-        for (int j = 0; j < 4; j++) {
-            cout << (int)mat.at<uint8_t>(i, j) << ' ';
-        }
-        cout << endl;
-    }
-
-    cout << "output cl" << endl;
-    for (int i = 0; i < 4; i++) {
-        for (int j = 0; j < 4; j++) {
-            cout << (int)arr2[i * 4 + j] << ' ';
-        }
-        cout << endl;
-    }
-
-    cout << "output opencv" << endl;
-    for (int i = 0; i < 4; i++) {
-        for (int j = 0; j < 4; j++) {
-            cout << (int)out.at<uint8_t>(i, j) << ' ';
-        }
-        cout << endl;
-    }
-
-    for (int i = 0; i < 16; i++) {
-        if (out.at<uint8_t>(i / 4, i % 4) == arr2[i]) {
-            cout << "erreur à la position " << i << endl;
-            exit(1);
-        }
-    }
-    exit(0);
-}
-
 int main(int, char **) {
-    // check();
-
     VideoCapture camera("./bourne.mp4");
     if (!camera.isOpened()) // check if we succeeded
         return -1;
@@ -94,9 +35,11 @@ int main(int, char **) {
     cl_mem edgebuff = cl_getmem(S.width * S.height);
     cl_mem edge_x = cl_getmem(S.width * S.height);
     cl_mem edge_y = cl_getmem(S.width * S.height);
-    uint8_t *buffedge = new uint8_t[S.width * S.height];
+    uint8_t *buffedge;
+#ifndef MAPPED
+    buffedge = new uint8_t[S.width * S.height];
 #endif
-
+#endif
     struct timespec start, end;
     double diff, tot = 0;
     int count = 0;
@@ -132,12 +75,19 @@ int main(int, char **) {
         cl_blur(edge_x, edge_y, S.width, S.height);
         cl_blur(edge_y, graybuff, S.width, S.height);
 
-        cl_memread(graybuff, grayframe.data, S.width * S.height);
-
         cl_Scharr(graybuff, edge_x, S.width, S.height, true);
         cl_Scharr(graybuff, edge_y, S.width, S.height, false);
+
         cl_average(edge_x, edge_y, edgebuff, S.width, S.height);
+
+#ifdef MAPPED
+        grayframe.data = (uint8_t *)cl_map_mem(graybuff, S.width * S.height);
+        buffedge = (uint8_t *)cl_map_mem(edgebuff, S.width * S.height);
+#else
+        cl_memread(graybuff, grayframe.data, S.width * S.height);
         cl_memread(edgebuff, buffedge, S.width * S.height);
+#endif
+
         Mat edge(S, CV_8UC1, buffedge);
 #endif
 
@@ -151,6 +101,11 @@ int main(int, char **) {
         grayframe.copyTo(displayframe, edge);
         cvtColor(displayframe, displayframe, COLOR_GRAY2BGR);
         outputVideo << displayframe;
+
+#ifdef MAPPED
+        cl_unmap_mem(graybuff, grayframe.data);
+        cl_unmap_mem(edgebuff, buffedge);
+#endif
 #ifdef SHOW
         imshow(windowName, displayframe);
 #endif
@@ -169,9 +124,10 @@ int main(int, char **) {
     cl_releasemem(edgebuff);
     cl_releasemem(edge_x);
     cl_releasemem(edge_y);
-
-    cl_clean();
+#ifndef MAPPED
     delete[] buffedge;
+#endif
+    cl_clean();
 #endif
 
     return EXIT_SUCCESS;

@@ -5,7 +5,7 @@ GXX=g++
 
 LDLIBS=$(CVLDLIBS) -lOpenCL -lnvidia-opencl
 CXXFLAGS=-pg -g -Wall -Wextra -fpermissive -std=gnu++17 -Werror -O3 -ftree-vectorize -fstack-protector-strong
-CPPFLAGS=-DCL_TARGET_OPENCL_VERSION=220 $(CVCFLAGS)
+CPPFLAGS=-DCL_TARGET_OPENCL_VERSION=220 $(CVCFLAGS) -DGROUPS=4
 
 run: all
 	./$(EXE)

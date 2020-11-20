@@ -25,7 +25,6 @@ static cl_mem gaussian;
 
 void cl_blur(cl_mem frame, cl_mem output, size_t width, size_t height) {
     // Set kernel arguments.
-    static const size_t local_size = 4;
     unsigned argi = 0;
     cl_int status;
     cl_uint W = width, H = height, D = 3;
@@ -49,12 +48,19 @@ void cl_blur(cl_mem frame, cl_mem output, size_t width, size_t height) {
     status = clSetKernelArg(kernel_convol, argi++, sizeof(cl_uint), &D);
     checkError(status, "[BLUR] kernel set arg 6 failed");
 
+#ifdef GROUPS
     const size_t global_work_size[] = {height, width};
-    const size_t local_work_size[] = {local_size, local_size};
+    const size_t local_work_size[] = {GROUPS, GROUPS};
+    int dim = 2;
+#else
+    const size_t global_work_size[] = {height * width};
+    const size_t *local_work_size = NULL;
+    int dim = 1;
+#endif
+    status = clEnqueueNDRangeKernel(queue, kernel_convol, dim, NULL,
+                                    global_work_size, local_work_size, 0, NULL,
+                                    &event);
 
-    status =
-        clEnqueueNDRangeKernel(queue, kernel_convol, 2, NULL, global_work_size,
-                               local_work_size, 0, NULL, &event);
     checkError(status, "[BLUR] Failed to launch kernel");
     status = clWaitForEvents(1, &event);
     checkError(status, "[BLUR] clWaitForEvents");
@@ -214,7 +220,13 @@ void cl_init() {
     program = clCreateProgramWithSource(
         context, 1, (const char **)opencl_program, NULL, &status);
     checkError(status, "program creation failed");
-    status = clBuildProgram(program, 0, NULL, NULL, NULL, NULL);
+
+#ifdef GROUPS
+    const char *buildoptions = "-DGROUPS";
+#else
+    const char *buildoptions = "";
+#endif
+    status = clBuildProgram(program, 0, NULL, buildoptions, NULL, NULL);
     if (status != CL_SUCCESS) {
         print_clbuild_errors(program, device);
         checkError(status, "build failed");

@@ -5,8 +5,14 @@ __kernel void matrix_convolution(__global const unsigned char *f,
                                  __global const float *y,
                                  __global unsigned char *restrict z, unsigned W,
                                  unsigned H, unsigned D) {
+#ifdef GROUPS
     unsigned i = get_group_id(0) * get_local_size(0) + get_local_id(0);
     unsigned j = get_group_id(1) * get_local_size(1) + get_local_id(1);
+#else
+    unsigned id = get_global_id(0);
+    unsigned i = id / W;
+    unsigned j = id % W;
+#endif
 
     float sum = 0;
     for (unsigned r = 0; r < D; r++) {
