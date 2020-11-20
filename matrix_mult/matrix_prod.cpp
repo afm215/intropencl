@@ -9,18 +9,12 @@
 using namespace std;
 
 const char *getErrorString(cl_int error);
+unsigned char **read_file(const char *name);
 
-const unsigned local_size = 4;
 // M, K and N must be multiples of local_size
 const unsigned M = 1000;
 const unsigned K = 1000;
 const unsigned N = 1000;
-
-#ifdef GROUPS
-#define PROGRAM "matrix_prod_groups"
-#else
-#define PROGRAM "matrix_prod"
-#endif
 
 void print_clbuild_errors(cl_program program, cl_device_id device) {
     cout << "Program Build failed\n";
@@ -30,40 +24,6 @@ void print_clbuild_errors(cl_program program, cl_device_id device) {
                           buffer, &length);
     cout << "--- Build log ---\n " << buffer << endl;
     exit(1);
-}
-
-unsigned char **read_file(const char *name) {
-    size_t size;
-    unsigned char **output = (unsigned char **)malloc(sizeof(unsigned char *));
-    FILE *fp = fopen(name, "rb");
-    if (!fp) {
-        printf("no such file:%s", name);
-        exit(-1);
-    }
-
-    fseek(fp, 0, SEEK_END);
-    size = ftell(fp);
-    fseek(fp, 0, SEEK_SET);
-
-    *output = (unsigned char *)malloc(size);
-    unsigned char **outputstr =
-        (unsigned char **)malloc(sizeof(unsigned char *));
-    *outputstr = (unsigned char *)malloc(size);
-    if (!*output) {
-        fclose(fp);
-        printf("mem allocate failure:%s", name);
-        exit(-1);
-    }
-
-    if (!fread(*output, size, 1, fp))
-        printf("failed to read file\n");
-    fclose(fp);
-    printf("file size %lu\n", size);
-    printf("-------------------------------------------\n");
-    snprintf((char *)*outputstr, size, "%s\n", *output);
-    printf("%s\n", *outputstr);
-    printf("-------------------------------------------\n");
-    return outputstr;
 }
 
 void checkError(int status, const char *msg) {
@@ -96,7 +56,7 @@ void auto_display_time(struct timespec *start, const char *name, unsigned nb) {
 float rand_float() { return float(rand()) / float(RAND_MAX) * 20.0f - 10.0f; }
 
 int main() {
-    srand(time(NULL));
+    srand(42);
     char char_buffer[STRING_BUFFER_LEN];
     cl_platform_id platform;
     cl_device_id device;
@@ -146,11 +106,16 @@ int main() {
         printf("Program creation failed\n");
         return 1;
     }
-    int success = clBuildProgram(program, 0, NULL, NULL, NULL, NULL);
+
+    const char *options = NULL;
+#ifdef GROUPS
+    options = "-DGROUPS";
+#endif
+    int success = clBuildProgram(program, 0, NULL, options, NULL, NULL);
     if (success != CL_SUCCESS)
         print_clbuild_errors(program, device);
 
-    kernel = clCreateKernel(program, PROGRAM, NULL);
+    kernel = clCreateKernel(program, "matrix_prod", NULL);
     // Input buffers.
     input_a_buf = clCreateBuffer(context, CL_MEM_READ_WRITE,
                                  M * K * sizeof(float), NULL, &status);
@@ -168,21 +133,14 @@ int main() {
     auto_display_time(&start, "GPU context init", M * K + K * N + M * N);
 
     input_a = (float *)clEnqueueMapBuffer(
-        queue, input_a_buf, CL_FALSE, CL_MAP_READ | CL_MAP_WRITE, 0,
-        M * K * sizeof(float), 0, NULL, &write_event[0], &status);
-    if (input_a == NULL) {
-        printf("mapped buffer is null.\n");
-        return 1;
-    }
-    input_b = (float *)clEnqueueMapBuffer(
-        queue, input_b_buf, CL_FALSE, CL_MAP_READ | CL_MAP_WRITE, 0,
-        K * N * sizeof(float), 0, NULL, &write_event[1], &status);
-    if (input_b == NULL) {
-        printf("mapped buffer is null.\n");
-        return 1;
-    }
+        queue, input_a_buf, CL_TRUE, CL_MAP_READ | CL_MAP_WRITE, 0,
+        M * K * sizeof(float), 0, NULL, NULL, &status);
+    checkError(status, "error mapping a buffer");
 
-    clWaitForEvents(2, write_event);
+    input_b = (float *)clEnqueueMapBuffer(
+        queue, input_b_buf, CL_TRUE, CL_MAP_READ | CL_MAP_WRITE, 0,
+        K * N * sizeof(float), 0, NULL, NULL, &status);
+    checkError(status, "error mapping a buffer");
 
     auto_display_time(&start, "GPU map buffer", 0);
 
@@ -211,16 +169,12 @@ int main() {
 
     auto_display_time(&start, "CPU matrix multiplication", M * (2 * K - 1) * N);
 
-    // Transfer inputs to each device. Each of the host buffers supplied to
-    // clEnqueueWriteBuffer here is already aligned to ensure that DMA is
-    // used for the host-to-device transfer.
-
-    cl_event kernel_event;
-
-    clEnqueueUnmapMemObject(queue, input_a_buf, input_a, 0, NULL,
-                            &write_event[0]);
-    clEnqueueUnmapMemObject(queue, input_b_buf, input_b, 0, NULL,
-                            &write_event[1]);
+    status = clEnqueueUnmapMemObject(queue, input_a_buf, input_a, 0, NULL,
+                                     &write_event[0]);
+    checkError(status, "unmap buffers failed");
+    status = clEnqueueUnmapMemObject(queue, input_b_buf, input_b, 0, NULL,
+                                     &write_event[1]);
+    checkError(status, "unmap buffers failed");
     clWaitForEvents(2, write_event);
     auto_display_time(&start, "unmap buffers", 0);
 
@@ -252,10 +206,11 @@ int main() {
 
     auto_display_time(&start, "GPU set params", 0);
 
-// GPU RUN
+    // GPU RUN
+    cl_event kernel_event;
 #ifdef GROUPS
     const size_t global_work_size[] = {M, N};
-    const size_t local_work_size[] = {local_size, local_size};
+    const size_t local_work_size[] = {GROUPS, GROUPS};
     status = clEnqueueNDRangeKernel(queue, kernel, 2, NULL, global_work_size,
                                     local_work_size, 0, NULL, &kernel_event);
 #else
@@ -265,52 +220,50 @@ int main() {
 #endif
     checkError(status, "Failed to launch kernel");
     // Read the result. This the final operation.
-    clWaitForEvents(1, &kernel_event);
+    status = clWaitForEvents(1, &kernel_event);
+    checkError(status, "clWaitForEvents");
 
     auto_display_time(&start, "GPU run", M * N * (2 * K - 1));
 
     // GPU READ
-
-    output = (float *)clEnqueueMapBuffer(queue, output_buf, CL_FALSE,
+    output = (float *)clEnqueueMapBuffer(queue, output_buf, CL_TRUE,
                                          CL_MAP_READ, 0, M * N * sizeof(float),
-                                         0, NULL, &write_event[0], &status);
-    if (output == NULL) {
-        printf("mapped buffer is null.\n");
-        return 1;
-    }
+                                         0, NULL, NULL, &status);
+    checkError(status, "map buffer failed");
 
     auto_display_time(&start, "GPU output map", 0);
 
-    // VALUES CHECK
-
     // Verify results.
     bool pass = true;
-
     for (unsigned j = 0; j < M * N && pass; ++j) {
+
         if (fabsf(output[j] - ref_output[j]) > 1.0e-5f) {
             printf(
                 "Failed verification @ index %d\nOutput: %f\nReference: %f\n",
                 j, output[j], ref_output[j]);
             pass = false;
+            exit(1);
         }
     }
 
     auto_display_time(&start, "value verification", M * N);
 
-    // Release local events.
+    status = clEnqueueUnmapMemObject(queue, output_buf, output, 0, NULL,
+                                     &write_event[0]);
+    checkError(status, "unmap buffer failed");
+    clWaitForEvents(1, &write_event[0]);
+
+    clReleaseEvent(kernel_event);
     clReleaseEvent(write_event[0]);
     clReleaseEvent(write_event[1]);
     clReleaseKernel(kernel);
+    clReleaseProgram(program);
+    clFinish(queue);
     clReleaseCommandQueue(queue);
     clReleaseMemObject(input_a_buf);
     clReleaseMemObject(input_b_buf);
     clReleaseMemObject(output_buf);
-    clReleaseProgram(program);
     clReleaseContext(context);
-
-    //--------------------------------------------------------------------
-
-    clFinish(queue);
 
     return 0;
 }
@@ -457,4 +410,38 @@ const char *getErrorString(cl_int error) {
     default:
         return "Unknown OpenCL error";
     }
+}
+
+unsigned char **read_file(const char *name) {
+    size_t size;
+    unsigned char **output = (unsigned char **)malloc(sizeof(unsigned char *));
+    FILE *fp = fopen(name, "rb");
+    if (!fp) {
+        printf("no such file:%s", name);
+        exit(-1);
+    }
+
+    fseek(fp, 0, SEEK_END);
+    size = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+
+    *output = (unsigned char *)malloc(size);
+    unsigned char **outputstr =
+        (unsigned char **)malloc(sizeof(unsigned char *));
+    *outputstr = (unsigned char *)malloc(size);
+    if (!*output) {
+        fclose(fp);
+        printf("mem allocate failure:%s", name);
+        exit(-1);
+    }
+
+    if (!fread(*output, size, 1, fp))
+        printf("failed to read file\n");
+    fclose(fp);
+    printf("file size %lu\n", size);
+    printf("-------------------------------------------\n");
+    snprintf((char *)*outputstr, size, "%s\n", *output);
+    printf("%s\n", *outputstr);
+    printf("-------------------------------------------\n");
+    return outputstr;
 }

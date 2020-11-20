@@ -20,3 +20,5 @@ If `GROUPS` is defined, it uses groups to have cache speedup. You can change the
 
 ## Video filter
 Video filtering calculations in GPU (opencv stuff) to modify a video.
+
+Compare runtimes between OpenCV and home made OpenCL functions.
