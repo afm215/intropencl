@@ -21,6 +21,45 @@ static cl_kernel kernel_convol, kernel_average;
 
 static cl_mem scharrx;
 static cl_mem scharry;
+static cl_mem gaussian;
+
+void cl_blur(cl_mem frame, cl_mem output, size_t width, size_t height) {
+    // Set kernel arguments.
+    static const size_t local_size = 4;
+    unsigned argi = 0;
+    cl_int status;
+    cl_uint W = width, H = height, D = 3;
+    cl_event event;
+
+    status = clSetKernelArg(kernel_convol, argi++, sizeof(cl_mem), &frame);
+    checkError(status, "[BLUR] kernel set arg 1 failed");
+
+    status = clSetKernelArg(kernel_convol, argi++, sizeof(cl_mem), &gaussian);
+    checkError(status, "[BLUR] kernel set arg 2 failed");
+
+    status = clSetKernelArg(kernel_convol, argi++, sizeof(cl_mem), &output);
+    checkError(status, "[BLUR] kernel set arg 3 failed");
+
+    status = clSetKernelArg(kernel_convol, argi++, sizeof(cl_uint), &W);
+    checkError(status, "[BLUR] kernel set arg 4 failed");
+
+    status = clSetKernelArg(kernel_convol, argi++, sizeof(cl_uint), &H);
+    checkError(status, "[BLUR] kernel set arg 5 failed");
+
+    status = clSetKernelArg(kernel_convol, argi++, sizeof(cl_uint), &D);
+    checkError(status, "[BLUR] kernel set arg 6 failed");
+
+    const size_t global_work_size[] = {height, width};
+    const size_t local_work_size[] = {local_size, local_size};
+
+    status =
+        clEnqueueNDRangeKernel(queue, kernel_convol, 2, NULL, global_work_size,
+                               local_work_size, 0, NULL, &event);
+    checkError(status, "[BLUR] Failed to launch kernel");
+    status = clWaitForEvents(1, &event);
+    checkError(status, "[BLUR] clWaitForEvents");
+    clReleaseEvent(event);
+}
 
 void cl_Scharr(cl_mem frame, cl_mem output, size_t width, size_t height,
                bool derivex) {
@@ -51,7 +90,7 @@ void cl_Scharr(cl_mem frame, cl_mem output, size_t width, size_t height,
     checkError(status, "[SCHARR] kernel set arg 6 failed");
 
     // GPU RUN
-    const size_t global_work_size[] = {width, height};
+    const size_t global_work_size[] = {height, width};
     const size_t local_work_size[] = {local_size, local_size};
     status =
         clEnqueueNDRangeKernel(queue, kernel_convol, 2, NULL, global_work_size,
@@ -186,13 +225,19 @@ void cl_init() {
     kernel_average = clCreateKernel(program, "matrix_average", &status);
     checkError(status, "kernel creation failed");
 
-    scharrx = cl_getmem(9);
-    int8_t tabx[] = {1, 0, -1, 2, 0, -2, 1, 0, -1};
-    cl_memwrite(tabx, scharrx, 9);
+    float tabx[] = {2, 0, -2, 8, 0, -8, 2, 0, -2};
+    scharrx = cl_getmem(sizeof(tabx));
+    cl_memwrite(tabx, scharrx, sizeof(tabx));
 
-    scharry = cl_getmem(9);
-    int8_t taby[] = {1, 2, 1, 0, 0, 0, -1, -2, -1};
-    cl_memwrite(taby, scharry, 9);
+    float taby[] = {2, 8, 2, 0, 0, 0, -2, -8, -2};
+    scharry = cl_getmem(sizeof(taby));
+    cl_memwrite(taby, scharry, sizeof(taby));
+
+    float gaussblur[] = {1., 2., 1., 2., 4., 2., 1., 2., 1.};
+    for (int i = 0; i < 9; i++)
+        gaussblur[i] /= 16.;
+    gaussian = cl_getmem(sizeof(gaussblur));
+    cl_memwrite(gaussblur, gaussian, sizeof(gaussblur));
 }
 
 void cl_releasemem(cl_mem buff) { clReleaseMemObject(buff); }
@@ -393,10 +438,12 @@ unsigned char **read_file(const char *name) {
     size = ftell(fp);
     fseek(fp, 0, SEEK_SET);
 
-    *output = (unsigned char *)malloc(size);
+    *output = (unsigned char *)malloc(size + 1);
+    output[size] = 0;
     unsigned char **outputstr =
         (unsigned char **)malloc(sizeof(unsigned char *));
-    *outputstr = (unsigned char *)malloc(size);
+    *outputstr = (unsigned char *)malloc(size + 1);
+    outputstr[size] = 0;
     if (!*output) {
         fclose(fp);
         printf("mem allocate failure:%s", name);

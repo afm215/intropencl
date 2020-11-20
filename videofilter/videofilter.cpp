@@ -23,13 +23,15 @@ void check() {
     cl_mem buffer2 = cl_getmem(16);
 
     cl_memwrite(arr1, buffer1, 16);
-    cl_Scharr(buffer1, buffer2, 4, 4, true);
+    cl_blur(buffer1, buffer2, 4, 4);
+    // cl_Scharr(buffer1, buffer2, 4, 4, true);
     cl_memread(buffer2, arr2, 16);
 
     Mat mat(Size(4, 4), CV_8UC1, arr1);
     Mat out;
 
-    Scharr(mat, out, CV_8U, 1, 0, 1, 0, BORDER_DEFAULT);
+    // Scharr(mat, out, CV_8UC1, 1, 0, 1, 0, BORDER_CONSTANT);
+    GaussianBlur(mat, out, Size(3, 3), 0, 0);
 
     cout << "input" << endl;
     for (int i = 0; i < 4; i++) {
@@ -65,7 +67,7 @@ void check() {
 }
 
 int main(int, char **) {
-    check();
+    // check();
 
     VideoCapture camera("./bourne.mp4");
     if (!camera.isOpened()) // check if we succeeded
@@ -95,7 +97,7 @@ int main(int, char **) {
     uint8_t *buffedge = new uint8_t[S.width * S.height];
 #endif
 
-    time_t start, end;
+    struct timespec start, end;
     double diff, tot = 0;
     int count = 0;
 #ifdef SHOW
@@ -109,22 +111,29 @@ int main(int, char **) {
         if (count > 299)
             break;
         camera >> cameraFrame;
-
         Mat grayframe, edge_inv;
 
         cvtColor(cameraFrame, grayframe, COLOR_BGR2GRAY);
-        time(&start);
+
+        clock_gettime(CLOCK_REALTIME, &start);
+
+#ifdef OPENCV
         GaussianBlur(grayframe, grayframe, Size(3, 3), 0, 0);
         GaussianBlur(grayframe, grayframe, Size(3, 3), 0, 0);
         GaussianBlur(grayframe, grayframe, Size(3, 3), 0, 0);
 
-#ifdef OPENCV
         Mat edge_x, edge_y, edge;
-        Scharr(grayframe, edge_x, CV_8U, 0, 1, 1, 0, BORDER_DEFAULT);
-        Scharr(grayframe, edge_y, CV_8U, 1, 0, 1, 0, BORDER_DEFAULT);
+        Scharr(grayframe, edge_x, CV_8U, 0, 1, 1, 0, BORDER_CONSTANT);
+        Scharr(grayframe, edge_y, CV_8U, 1, 0, 1, 0, BORDER_CONSTANT);
         addWeighted(edge_x, 0.5, edge_y, 0.5, 0, edge);
 #else
         cl_memwrite(grayframe.data, graybuff, S.width * S.height);
+        cl_blur(graybuff, edge_x, S.width, S.height);
+        cl_blur(edge_x, edge_y, S.width, S.height);
+        cl_blur(edge_y, graybuff, S.width, S.height);
+
+        cl_memread(graybuff, grayframe.data, S.width * S.height);
+
         cl_Scharr(graybuff, edge_x, S.width, S.height, true);
         cl_Scharr(graybuff, edge_y, S.width, S.height, false);
         cl_average(edge_x, edge_y, edgebuff, S.width, S.height);
@@ -132,27 +141,8 @@ int main(int, char **) {
         Mat edge(S, CV_8UC1, buffedge);
 #endif
 
-        if (count == 150) {
-            cout << "image 150:" << endl;
-            for (int i = 0; i < 30; i++) {
-                for (int j = 0; j < 30; j++) {
-                    cout << (int)edge.at<uint8_t>(i, j) << ' ';
-                }
-                cout << endl;
-            }
-        }
-
-        // if (count == 150) {
-        //     for (int i = 0; i < 20; i++) {
-        //         for (int j = 0; j < 20; j++) {
-        //             cout << (int)edge.at<uint8_t>(i, j) << ' ';
-        //         }
-        //         cout << endl;
-        //     }
-        // }
-
         threshold(edge, edge, 80, 255, THRESH_BINARY_INV);
-        time(&end);
+        clock_gettime(CLOCK_REALTIME, &end);
         cvtColor(edge, edge_inv, COLOR_GRAY2BGR);
         // Clear the output image to black, so that the cartoon line drawings
         // will be black (ie: not drawn).
@@ -164,12 +154,14 @@ int main(int, char **) {
 #ifdef SHOW
         imshow(windowName, displayframe);
 #endif
-        diff = difftime(end, start);
+        diff = (double)(end.tv_sec - start.tv_sec) +
+               (double)(end.tv_nsec - start.tv_nsec) / 1000000000.;
         tot += diff;
     }
 
     outputVideo.release();
     camera.release();
+    printf("%lf\n", tot);
     printf("FPS %.2lf .\n", 299.0 / tot);
 
 #ifndef OPENCV
