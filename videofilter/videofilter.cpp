@@ -9,7 +9,64 @@
 using namespace cv;
 using namespace std;
 
+void check() {
+    cl_init();
+    srand(42);
+
+    uint8_t arr1[16];
+    uint8_t arr2[16] = {0};
+    for (int i = 0; i < 16; i++) {
+        arr1[i] = rand();
+    }
+
+    cl_mem buffer1 = cl_getmem(16);
+    cl_mem buffer2 = cl_getmem(16);
+
+    cl_memwrite(arr1, buffer1, 16);
+    cl_Scharr(buffer1, buffer2, 4, 4, true);
+    cl_memread(buffer2, arr2, 16);
+
+    Mat mat(Size(4, 4), CV_8UC1, arr1);
+    Mat out;
+
+    Scharr(mat, out, CV_8U, 1, 0, 1, 0, BORDER_DEFAULT);
+
+    cout << "input" << endl;
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 4; j++) {
+            cout << (int)mat.at<uint8_t>(i, j) << ' ';
+        }
+        cout << endl;
+    }
+
+    cout << "output cl" << endl;
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 4; j++) {
+            cout << (int)arr2[i * 4 + j] << ' ';
+        }
+        cout << endl;
+    }
+
+    cout << "output opencv" << endl;
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 4; j++) {
+            cout << (int)out.at<uint8_t>(i, j) << ' ';
+        }
+        cout << endl;
+    }
+
+    for (int i = 0; i < 16; i++) {
+        if (out.at<uint8_t>(i / 4, i % 4) == arr2[i]) {
+            cout << "erreur à la position " << i << endl;
+            exit(1);
+        }
+    }
+    exit(0);
+}
+
 int main(int, char **) {
+    check();
+
     VideoCapture camera("./bourne.mp4");
     if (!camera.isOpened()) // check if we succeeded
         return -1;
@@ -30,9 +87,12 @@ int main(int, char **) {
     }
 
 #ifndef OPENCV
-    void *graybuff = cl_getmem(S.width * S.height);
-    void *edge_x = cl_getmem(S.width * S.height);
-    void *edge_y = cl_getmem(S.width * S.height);
+    cl_init();
+    cl_mem graybuff = cl_getmem(S.width * S.height);
+    cl_mem edgebuff = cl_getmem(S.width * S.height);
+    cl_mem edge_x = cl_getmem(S.width * S.height);
+    cl_mem edge_y = cl_getmem(S.width * S.height);
+    uint8_t *buffedge = new uint8_t[S.width * S.height];
 #endif
 
     time_t start, end;
@@ -42,7 +102,7 @@ int main(int, char **) {
     const char *windowName = "filter"; // Name shown in the GUI window.
     namedWindow(windowName); // Resizable window, might not work on Windows.
 #endif
-    cl_init();
+
     while (true) {
         Mat cameraFrame, displayframe;
         count = count + 1;
@@ -64,12 +124,32 @@ int main(int, char **) {
         Scharr(grayframe, edge_y, CV_8U, 1, 0, 1, 0, BORDER_DEFAULT);
         addWeighted(edge_x, 0.5, edge_y, 0.5, 0, edge);
 #else
-        cl_memcopy(grayframe.data, graybuff, S.width * S.height);
-        ScharrCL(graybuff, edge_x, true);
-        ScharrCL(graybuff, edge_y, false);
-        addWeightedCL(edge_x, edge_y, edge, S.width, S.height);
-        cl_memcopy();
+        cl_memwrite(grayframe.data, graybuff, S.width * S.height);
+        cl_Scharr(graybuff, edge_x, S.width, S.height, true);
+        cl_Scharr(graybuff, edge_y, S.width, S.height, false);
+        cl_average(edge_x, edge_y, edgebuff, S.width, S.height);
+        cl_memread(edgebuff, buffedge, S.width * S.height);
+        Mat edge(S, CV_8UC1, buffedge);
 #endif
+
+        if (count == 150) {
+            cout << "image 150:" << endl;
+            for (int i = 0; i < 30; i++) {
+                for (int j = 0; j < 30; j++) {
+                    cout << (int)edge.at<uint8_t>(i, j) << ' ';
+                }
+                cout << endl;
+            }
+        }
+
+        // if (count == 150) {
+        //     for (int i = 0; i < 20; i++) {
+        //         for (int j = 0; j < 20; j++) {
+        //             cout << (int)edge.at<uint8_t>(i, j) << ' ';
+        //         }
+        //         cout << endl;
+        //     }
+        // }
 
         threshold(edge, edge, 80, 255, THRESH_BINARY_INV);
         time(&end);
@@ -87,10 +167,20 @@ int main(int, char **) {
         diff = difftime(end, start);
         tot += diff;
     }
-    cl_clean();
+
     outputVideo.release();
     camera.release();
     printf("FPS %.2lf .\n", 299.0 / tot);
+
+#ifndef OPENCV
+    cl_releasemem(graybuff);
+    cl_releasemem(edgebuff);
+    cl_releasemem(edge_x);
+    cl_releasemem(edge_y);
+
+    cl_clean();
+    delete[] buffedge;
+#endif
 
     return EXIT_SUCCESS;
 }
