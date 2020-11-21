@@ -9,7 +9,7 @@
 using namespace std;
 
 const char *getErrorString(cl_int error);
-const unsigned N = 1000;
+const unsigned N = 50000000;
 
 unsigned char **read_file(const char *name) {
     size_t size;
@@ -85,10 +85,17 @@ int main() {
     float *input_a = 0;
     float *input_b = 0;
     float *output = 0;
+    struct timespec memory_start, memory_end;
+    double memory_time = 0;
 #ifndef MAPPED
+    clock_gettime(CLOCK_REALTIME, &memory_start);
     input_a = (float *)malloc(N * sizeof(float));
     input_b = (float *)malloc(N * sizeof(float));
     output = (float *)malloc(N * sizeof(float));
+    clock_gettime(CLOCK_REALTIME, &memory_end);
+    memory_time +=
+        (double)(memory_end.tv_sec - memory_start.tv_sec) +
+        (double)(memory_end.tv_nsec - memory_start.tv_nsec) / 1000000000.;
 #endif
     float *ref_output = (float *)malloc(sizeof(float) * N);
     cl_mem input_a_buf;
@@ -148,6 +155,8 @@ int main() {
 
     auto_display_time(&start, "GPU context init");
 
+    clock_gettime(CLOCK_REALTIME, &memory_start);
+
 #ifdef MAPPED
     input_a = (float *)clEnqueueMapBuffer(
         queue, input_a_buf, CL_FALSE, CL_MAP_READ | CL_MAP_WRITE, 0,
@@ -206,6 +215,11 @@ int main() {
     auto_display_time(&start, "unmap buffers");
 #endif
 
+    clock_gettime(CLOCK_REALTIME, &memory_end);
+    memory_time +=
+        (double)(memory_end.tv_sec - memory_start.tv_sec) +
+        (double)(memory_end.tv_nsec - memory_start.tv_nsec) / 1000000000.;
+
     // Set kernel arguments.
     unsigned argi = 0;
 
@@ -234,6 +248,8 @@ int main() {
     auto_display_time(&start, "GPU run");
 
     // GPU READ
+
+    clock_gettime(CLOCK_REALTIME, &memory_start);
 
 #ifndef MAPPED
     status =
@@ -267,6 +283,20 @@ int main() {
     }
 
     auto_display_time(&start, "value verification");
+
+    clock_gettime(CLOCK_REALTIME, &memory_end);
+    memory_time +=
+        (double)(memory_end.tv_sec - memory_start.tv_sec) +
+        (double)(memory_end.tv_nsec - memory_start.tv_nsec) / 1000000000.;
+
+    printf("%s memory operations (read, write, ...) took %0.9lf seconds\n",
+#ifdef MAPPED
+           "mapped"
+#else
+           "copied"
+#endif
+           ,
+           memory_time);
 
     // Release local events.
     clReleaseEvent(write_event[0]);

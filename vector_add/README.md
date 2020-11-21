@@ -10,10 +10,13 @@ Here are the time statistics depending on the size of the vector, and on whether
 
 |   N    | 1000  | 10000 | 100000 | 1000000 | 10000000 | 50000000 |
 |--------|-------|-------|------- |-------  |-------   |----------|
-|  cpu   | 0.6   | 30    | 228    | 1892    | 18017    | 80742    |
-| mapped | 24    | 26    | 62     | 330     | 907      | 3357     |
-| copy   | 25    | 25    | 71     | 252     | 870      | 3379     |
+|  CPU   | 0.6   | 30    | 228    | 1892    | 18017    | 80742    |
+|  GPU   | 24    | 26    | 62     | 330     | 907      | 3357     |
+| mapped | 1180  | 1537  | 4967   | 43068   | 410215   | 1961382  |
+| copied | 348   | 744   | 4046   | 38027   | 371854   | 1814686  |
+
+The lines `mapped` and `copied` give the time taken by all memory related operations: allocation, reading, writing, (un)mapping and copying.
 
 Clearly the bigger N the more the GPU beats the CPU. We can notice that for small N the CPU is much faster than the GPU,
 
-Weirly mapped memory is not faster than copied one. I'm quite sure it was faster on the odroid with the exact same program.
+Weirly mapped memory is not faster than copied one. I'm quite sure it was faster on the odroid with the same program.
